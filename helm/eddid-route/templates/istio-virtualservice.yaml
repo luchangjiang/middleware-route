@@ -1,0 +1,16 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: {{ include "eddid-route.name" . }}
+  environment: {{ .Values.custom.deployment.environment }}
+spec:
+  hosts:
+  - {{ .Values.custom.deployment.hostname }}
+  gateways:
+  - {{ .Values.istio.gateway.name }}
+  http:
+  - route:
+    - destination:
+        host: {{ include "eddid-route.fullname" . }}
+        port:
+          number: {{ .Values.service.port }}

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "eddid-route.fullname" . }}-config
+  labels:
+    app: {{ include "eddid-route.name" . }}
+    environment: {{ .Values.custom.deployment.environment }}
+data:
+  K8_SERVICE_NAME: {{ include "eddid-route.fullname" . }}
+  K8_SERVICE_PORT: {{ .Values.service.port | quote}}
+  APPLICATION_PORT: {{ required ".env.APPLICATION_PORT entry required!" .Values.env.APPLICATION_PORT | quote}}
+  EUREKA_PORT: {{ required ".env.EUREKA_PORT entry required!" .Values.env.EUREKA_PORT | quote}}
+  EUREKA_HOSTNAME: {{ required ".env.EUREKA_HOSTNAME entry required!" .Values.env.EUREKA_HOSTNAME }}
+  EUREKA_USER: {{ required ".env.EUREKA_USER entry required!" .Values.env.EUREKA_USER }}

@@ -1,0 +1,66 @@
+﻿#http端口配置
+server:
+    port: ${APPLICATION_PORT:1080}
+    connection-timeout: 5000
+    tomcat:
+        max-http-post-size: -1
+
+logging:
+  config: classpath:logback-spring.xml
+  level:
+    com:
+      lotstock:
+        eddid:  DEBUG
+
+spring:
+  application:
+    name: @artifactId@
+  # security:
+  #   username: river
+  #   passowrd: river
+  cloud:
+    config:
+      discovery:
+        enabled: true
+        service-id: eddid-config
+      label: master
+      name: eddid
+      profile: route,ibmp-route
+  freemarker:
+    request-context-attribute: request
+
+# 注册中心配置
+eureka:
+  instance:
+    non-secure-port: ${K8_SERVICE_PORT:1080}
+    secure-port-enabled: false
+    hostname: ${K8_SERVICE_NAME:localhost}
+    # prefer-ip-address: true
+  client:
+    service-url:
+      defaultZone: http://${EUREKA_USER:river}:${EUREKA_PASSWORD:river}@${EUREKA_HOSTNAME:localhost}:${EUREKA_PORT:9999}/eureka/
+
+swagger:
+  # 是否启用swagger，默认：true
+  enabled: true
+  # 标题
+  title: Eddid route构建RESTful API
+  contact:
+    # 维护人
+    name: River
+    email: Riverlu@newtype.io
+    url: https://www.newtype.io
+  # 版本
+  version: @project.version@
+  # 描述
+  description: 消息
+  # swagger扫描的基础包，默认：全扫描
+  base-package: com.lotstock.eddid.route.controller
+  # 需要处理的基础URL规则，默认：/**
+  base-path: /**
+  # 需要排除的URL规则，默认：空
+  #  exclude-path: ""
+  license: Apache License, Version 2.0
+  license-url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+                

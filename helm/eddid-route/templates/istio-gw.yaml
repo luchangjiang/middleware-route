@@ -1,0 +1,31 @@
+{{ if (eq .Values.custom.deployment.environment "prd") }}
+# Development shared a common gateway for same domain e.g ntdev.be
+# Check https://preliminary.istio.io/help/ops/traffic-management/deploy-guidelines/#browser-problem-when-multiple-gateways-configured-with-same-tls-certificate
+apiVersion: networking.istio.io/v1alpha3
+kind: Gateway
+metadata:
+  name: {{ .Values.istio.gateway.name }}
+  environment: {{ .Values.custom.deployment.environment }}
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "{{ .Values.custom.deployment.hostname }}"
+      tls:
+        httpsRedirect: false
+    - port:
+        number: 443
+        name: https-{{ .Values.istio.gateway.name }}
+        protocol: HTTPS
+      hosts:
+        - "{{ .Values.custom.deployment.hostname }}"
+      tls:
+        mode: SIMPLE
+        privateKey: /etc/istio/ingressgateway-certs/tls.key
+        serverCertificate: /etc/istio/ingressgateway-certs/tls.crt
+{{ end }}

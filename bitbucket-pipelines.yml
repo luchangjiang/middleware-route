@@ -1,0 +1,205 @@
+image: hkatsolutions/k8s-builder:18.4.0
+options:
+  docker: true
+  max-time: 15
+
+aliases:
+  - &defineEnvVar
+    export STACK_NAME="$APP_NAME-$ENVIRONMENT" 
+    K8_DEPLOYMENT_STRATEGY=RollingUpdate 
+    K8_GW_NAME=$APP_NAME-gateway 
+  - &overrideDevEnvVar
+    export IMAGE_TAG="$ENVIRONMENT-build.$BITBUCKET_BUILD_NUMBER" 
+    K8_DEPLOYMENT_STRATEGY=Recreate 
+    JAVA_VERSION=$JAVA_VERSION_TEST 
+    TOMCAT_VERSION=$TOMCAT_VERSION_TEST 
+    K8_GW_NAME=$K8_GW_NAME_TEST 
+    GCP_K8_DEPLOYER=$GCP_K8_DEPLOYER_TEST 
+    GCP_K8_DEPLOYER_KEY=$GCP_K8_DEPLOYER_KEY_TEST 
+    GCP_K8_CLUSTER_NAME=$GCP_K8_CLUSTER_NAME_TEST 
+    GCP_K8_CLUSTER_ZONE=$GCP_K8_CLUSTER_ZONE_TEST 
+    GCP_PROJECT_ID=$GCP_PROJECT_ID_TEST
+    AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID_TEST 
+    AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY_TEST 
+    AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION_TEST 
+    AWS_EKS_CLUSTER_NAME=$AWS_EKS_CLUSTER_NAME_TEST 
+    ALI_K8S_CERT=$ALI_K8S_CERT_TEST 
+    ALI_K8S_USER_CERT=$ALI_K8S_USER_CERT_TEST
+    ALI_K8S_USER_KEY=$ALI_K8S_USER_KEY_TEST 
+    ALI_K8S_ENDPOINT=$ALI_K8S_ENDPOINT_TEST 
+    ALI_ACCESS_KEY_ID=$ALI_ACCESS_KEY_ID_TEST 
+    ALI_SECRET_ACCESS_KEY=$ALI_SECRET_ACCESS_KEY_TEST 
+    ALI_DEFAULT_REGION=$ALI_DEFAULT_REGION_TEST 
+    ALI_REPO_NAMESPACE=$ALI_REPO_NAMESPACE_TEST 
+    EUREKA_HOSTNAME="$EUREKA_HOSTNAME-$ENVIRONMENT" 
+    EUREKA_USER=$EUREKA_USER_TEST 
+    EUREKA_PASSWORD=$EUREKA_PASSWORD_TEST 
+  - &authGCP |
+    echo $GCP_K8_DEPLOYER_KEY > /tmp/key.json
+    gcloud auth activate-service-account $GCP_K8_DEPLOYER --key-file=/tmp/key.json
+    gcloud container clusters get-credentials $GCP_K8_CLUSTER_NAME --zone=$GCP_K8_CLUSTER_ZONE --project=$GCP_PROJECT_ID
+    kubectl config set-context $(kubectl config current-context) --namespace=$K8_NAMESPACE
+    cat /tmp/key.json | docker login -u _json_key --password-stdin https://gcr.io
+    export IMAGE_REPO="gcr.io/$GCP_PROJECT_ID/$APP_NAME" 
+  - &authGCPDockerRegistry |
+    echo $GCP_K8_DEPLOYER_KEY > /tmp/key.json
+    gcloud auth activate-service-account $GCP_K8_DEPLOYER --key-file=/tmp/key.json
+    cat /tmp/key.json | docker login -u _json_key --password-stdin https://gcr.io
+    export IMAGE_REPO="gcr.io/$GCP_PROJECT_ID/$APP_NAME" 
+  - &authAWS |
+    export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text) 
+    aws eks --region $AWS_DEFAULT_REGION update-kubeconfig --name $AWS_EKS_CLUSTER_NAME
+    kubectl config set-context $(kubectl config current-context) --namespace=$K8_NAMESPACE
+    $(aws ecr get-login --region $AWS_DEFAULT_REGION --no-include-email)
+    set +e
+    aws ecr create-repository --repository-name $APP_NAME
+    set -e
+    export IMAGE_REPO="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$APP_NAME" 
+  - &authAli |
+    export K8S_REPO_PULL_SECRET=$ALI_K8S_REPO_PULL_SECRET
+    aliyun configure set --profile default --mode AK --access-key-id $ALI_ACCESS_KEY_ID --access-key-secret $ALI_SECRET_ACCESS_KEY --region $ALI_DEFAULT_REGION
+    echo $ALI_K8S_CERT | base64 --decode > /tmp/crt.pem
+    echo $ALI_K8S_USER_CERT | base64 --decode > /tmp/user.fullchain.pem
+    echo $ALI_K8S_USER_KEY | base64 --decode > /tmp/user.cert.pem
+    kubectl config set-cluster ali-k8s --server=$ALI_K8S_ENDPOINT --certificate-authority=/tmp/crt.pem --embed-certs=true
+    kubectl config set-credentials ali-k8s-user --client-certificate=/tmp/user.fullchain.pem --client-key=/tmp/user.cert.pem --embed-certs=true
+    kubectl config set-context ali-k8s-context --cluster=ali-k8s --namespace=$K8_NAMESPACE --user=ali-k8s-user
+    kubectl config use-context ali-k8s-context
+    export IMAGE_REPO_ENDPOINT=registry.$ALI_DEFAULT_REGION.aliyuncs.com
+    export IMAGE_REPO=$IMAGE_REPO_ENDPOINT/$ALI_REPO_NAMESPACE/$APP_NAME
+    export TEMP_CR_LOGIN=$(aliyun cr GET /tokens)
+    echo $TEMP_CR_LOGIN | jq -r .data.authorizationToken | docker login -u $(echo $TEMP_CR_LOGIN | jq -r .data.tempUserName) --password-stdin $IMAGE_REPO_ENDPOINT
+  - &authAliNoDockerRegistry |
+    export K8S_REPO_PULL_SECRET=$ALI_K8S_REPO_PULL_SECRET
+    aliyun configure set --profile default --mode AK --access-key-id $ALI_ACCESS_KEY_ID --access-key-secret $ALI_SECRET_ACCESS_KEY --region $ALI_DEFAULT_REGION
+    echo $ALI_K8S_CERT | base64 --decode > /tmp/crt.pem
+    echo $ALI_K8S_USER_CERT | base64 --decode > /tmp/user.fullchain.pem
+    echo $ALI_K8S_USER_KEY | base64 --decode > /tmp/user.cert.pem
+    kubectl config set-cluster ali-k8s --server=$ALI_K8S_ENDPOINT --certificate-authority=/tmp/crt.pem --embed-certs=true
+    kubectl config set-credentials ali-k8s-user --client-certificate=/tmp/user.fullchain.pem --client-key=/tmp/user.cert.pem --embed-certs=true
+    kubectl config set-context ali-k8s-context --cluster=ali-k8s --namespace=$K8_NAMESPACE --user=ali-k8s-user
+    kubectl config use-context ali-k8s-context
+  - &prodVersionCheck |
+    if [ $(git tag --points-at HEAD) ]
+    then
+      export IMAGE_TAG="$(git tag --points-at HEAD)"
+    else
+      echo "No revision tag found. Please tag you existing branch in semantic versioning e.g v1.0.0"
+      exit 1
+    fi
+  - &buildDockerImage |
+    mvn deploy -Dapp.port=$APPLICATION_PORT -Ddocker.image.repo=$IMAGE_REPO -Ddocker.image.tag=$IMAGE_TAG -Djava.version=$JAVA_VERSION -Dtomcat.version=$TOMCAT_VERSION -Dmaven.repo.user=$MAVEN_REPO_USER -Dmaven.repo.password=$MAVEN_REPO_PASSWORD -Dmaven.repo.url.release=$MAVEN_REPO_URL_RELEASE -Dmaven.repo.url.snapshot=$MAVEN_REPO_URL_SNAPSHOT
+  - &gcpSyncRepoToAli |
+    export IMAGE_REPO_ENDPOINT=registry.$ALI_DEFAULT_REGION.aliyuncs.com
+    export IMAGE_REPO=$IMAGE_REPO_ENDPOINT/$ALI_REPO_NAMESPACE/$APP_NAME
+    export TEMP_CR_LOGIN=$(aliyun cr GET /tokens)
+    gcloud config set project $GCP_PROJECT_ID
+    gcloud builds submit --config=gcp-cloudbuild.yaml --substitutions=REPO_NAME="$APP_NAME",TAG_NAME="$IMAGE_TAG",_ALI_IMAGE_REPO_NAMESPACE="$ALI_REPO_NAMESPACE",_ALI_IMAGE_REPO_ENDPOINT="$IMAGE_REPO_ENDPOINT",_ALI_IMAGE_REPO_USER="$(echo $TEMP_CR_LOGIN | jq -r .data.tempUserName)",_ALI_IMAGE_REPO_PASSWORD="$(echo $TEMP_CR_LOGIN | jq -r .data.authorizationToken)"
+  - &prepareDeployment |
+    envsubst <./helm/eddid-route/values.yaml.tpl >./helm/eddid-route/values.build.yaml
+    helm init --client-only
+    # Dry run for error check
+    helm upgrade $STACK_NAME ./helm/eddid-route/ -i -f ./helm/eddid-route/values.build.yaml --dry-run --debug --reuse-values \
+    --set image.repository=$IMAGE_REPO \
+    --set image.tag=$IMAGE_TAG 
+  - &deployHelm |
+    helm upgrade $STACK_NAME ./helm/eddid-route/ -i -f ./helm/eddid-route/values.build.yaml --reuse-values \
+    --set image.repository=$IMAGE_REPO \
+    --set image.tag=$IMAGE_TAG 
+  - &notificationScript |
+    if [ $ENVIRONMENT == 'prd' ]
+    then
+      export MSG_URL="https://$APP_HOSTNAME"
+    else
+      export MSG_URL="http://$APP_HOSTNAME:8080"
+    fi
+    chmod +x ./tools/pushToDingTalk.sh
+    ./tools/pushToDingTalk.sh
+
+pipelines:
+  branches:
+    develop:
+      - step:
+          name: Deploy to develop
+          deployment: test 
+          caches:
+            - docker
+            - maven
+          script: 
+            - export 
+              ENVIRONMENT=develop 
+              APP_HOSTNAME=$APP_HOSTNAME_DEVELOP 
+              K8_NAMESPACE=develop 
+            - *defineEnvVar
+            - *overrideDevEnvVar
+            - *authGCPDockerRegistry
+            - *authAliNoDockerRegistry
+            - *buildDockerImage
+            - *gcpSyncRepoToAli
+            - *prepareDeployment
+            - *deployHelm
+            - *notificationScript
+            
+  custom:
+    deploy-to-production:
+      - step:
+          name: Deploy to production
+          deployment: production 
+          caches:
+            - docker
+            - maven
+          script: 
+            - export ENVIRONMENT=prd
+            - *defineEnvVar
+            - *authGCPDockerRegistry
+            - *authAliNoDockerRegistry
+            - *prodVersionCheck
+            - *buildDockerImage
+            - *gcpSyncRepoToAli
+            - *prepareDeployment
+            - *deployHelm
+            - *notificationScript
+
+    deploy-to-feature:
+      - step:
+          name: Deploy to feature
+          caches:
+            - docker
+            - maven
+          script: 
+            - export 
+              ENVIRONMENT=feature 
+              APP_HOSTNAME=$APP_HOSTNAME_FEATURE 
+              K8_NAMESPACE=feature 
+            - *defineEnvVar
+            - *overrideDevEnvVar
+            - *authGCPDockerRegistry
+            - *authAliNoDockerRegistry
+            - *buildDockerImage
+            - *gcpSyncRepoToAli
+            - *prepareDeployment
+            - *deployHelm
+            - *notificationScript
+
+    deploy-to-uat:
+      - step:
+          name: Deploy to uat
+          deployment: staging 
+          caches:
+            - docker
+            - maven
+          script: 
+            - export 
+              ENVIRONMENT=uat 
+              APP_HOSTNAME=$APP_HOSTNAME_UAT 
+              K8_NAMESPACE=uat 
+            - *defineEnvVar
+            - *overrideDevEnvVar
+            - *authGCPDockerRegistry
+            - *authAliNoDockerRegistry
+            - *buildDockerImage
+            - *gcpSyncRepoToAli
+            - *prepareDeployment
+            - *deployHelm
+            - *notificationScript
+            

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "eddid-route.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "eddid-route.name" . }}
+    helm.sh/chart: {{ include "eddid-route.chart" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    environment: {{ .Values.custom.deployment.environment }}
+    version: {{ .Chart.AppVersion }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: {{ include "eddid-route.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
